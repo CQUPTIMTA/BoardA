@@ -2,7 +2,7 @@
  * @Description: 用于控制大疆电机
  * @Author: qingmeijiupiao
  * @Date: 2024-04-13 21:00:21
- * @LastEditTime: 2024-06-06 22:52:07
+ * @LastEditTime: 2024-06-19 21:45:00
  * @LastEditors: Please set LastEditors
  * @rely:PID_CONTROL.hpp
 */
@@ -29,6 +29,9 @@ class M3508_P19;
 
 //2006电机类
 class M2006_P36;
+
+//GM6020电机类
+class GM6020;
 
 //CAN初始化函数，要使用电机，必须先调用此函数初始化CAN通信
 void can_init(uint8_t TX_PIN,uint8_t RX_PIN,/*电流更新频率=*/int current_update_hz=100);
@@ -61,6 +64,7 @@ class C600_DATA{
     friend MOTOR;
     friend M3508_P19;
     friend M2006_P36;
+    friend GM6020;
 
 public:
     C600_DATA(){}
@@ -141,13 +145,14 @@ protected:
     bool enable=false;
     int64_t last_location_update_time=0;
     uint16_t last_angle=0;
+    bool is_GM6020 = false;
 
 };
 
 
 //1-8号电机数据接收对象,用户无需访问
-C600_DATA motor_201,motor_202,motor_203,motor_204,motor_205,motor_206,motor_207,motor_208;
-C600_DATA* motors[]={&motor_201,&motor_202,&motor_203,&motor_204,&motor_205,&motor_206,&motor_207,&motor_208};
+C600_DATA motor_201,motor_202,motor_203,motor_204,motor_205,motor_206,motor_207,motor_208/*后面是GM6020专属地址→*/,motor_209,motor_20A,motor_20B;
+C600_DATA* motors[]={&motor_201,&motor_202,&motor_203,&motor_204,&motor_205,&motor_206,&motor_207,&motor_208,&motor_209,&motor_20A,&motor_20B};
 
 
 
@@ -162,23 +167,27 @@ class MOTOR{
         friend void speed_contral_task(void* n);
         friend void update_current_task(void* n);
     public:
+        MOTOR(){};
         //id从1-8
         MOTOR(int id){
             //ID超过范围
             if(id<1 || id>8){
                 return;
             }
+            ID=id;
             data = motors[id-1];
             data->enable=true;
-            ////设置默认PID参数
+            //设置默认PID参数
             location_pid_contraler.setPram(default_location_pid_parmater);
             speed_pid_contraler.setPram(default_speed_pid_parmater);
+            
         }
         MOTOR(int id,pid_param location_pid,pid_param speed_pid){
             //ID超过范围
             if(id<1 || id>8){
                 return;
             }
+            ID=id;
             data = motors[id-1];
             data->enable=true;
             //设置PID参数
@@ -188,7 +197,7 @@ class MOTOR{
         //初始化,位置闭环,使能
         void setup(){
             data->enable=true;
-            if(speed_func_handle==NULL){
+            if(speed_func_handle==nullptr){
                 xTaskCreate(speed_contral_task,"speed_contral_task",4096,this,2,&speed_func_handle);
             }
         };
@@ -239,7 +248,7 @@ class MOTOR{
         //设置多圈目标位置
         void set_location(int64_t _location){
             //开启位置闭环控制任务
-            if(location_func_handle==NULL){
+            if(location_func_handle==nullptr){
                 xTaskCreate(location_contral_task,"location_contral_task",4096,this,2,&location_func_handle);
             }
             location_taget=_location;
@@ -252,7 +261,7 @@ class MOTOR{
         int64_t get_location(){
             return data->location;
         }
-        int get_current(){
+        int get_current_raw(){
             return data->get_current();
         }
         void set_max_curunt(float _max_curunt){
@@ -262,13 +271,13 @@ class MOTOR{
         }
         //卸载使能
         void unload(){
-            if(speed_func_handle!=NULL){
+            if(speed_func_handle!=nullptr){
                 vTaskDelete(speed_func_handle);
-                speed_func_handle=NULL;
+                speed_func_handle=nullptr;
             }
-            if(location_func_handle!=NULL){
+            if(location_func_handle!=nullptr){
                 vTaskDelete(location_func_handle);
-                location_func_handle=NULL;
+                location_func_handle=nullptr;
             }
             this->taget_speed=0;
             this->data->set_current=0;
@@ -279,13 +288,13 @@ class MOTOR{
         void load(){
             taget_speed = 0;
             this->data->enable=true;
-            if(speed_func_handle==NULL){
+            if(speed_func_handle==nullptr){
                 xTaskCreate(speed_contral_task,"speed_contral_task",4096,this,2,&speed_func_handle);
             }
         }
         //获取是否使能
         bool get_is_load(){
-            return speed_func_handle!=NULL;
+            return speed_func_handle!=nullptr;
         }
         //获取当前速度
         virtual float get_now_speed(){
@@ -296,11 +305,11 @@ class MOTOR{
             acce=acce>0?acce:0;
 
             this->data->enable=true;
-            if(location_func_handle!=NULL){
+            if(location_func_handle!=nullptr){
                 vTaskDelete(location_func_handle);
-                location_func_handle=NULL;
+                location_func_handle=nullptr;
             }
-            if(speed_func_handle==NULL){
+            if(speed_func_handle==nullptr){
                 xTaskCreate(speed_contral_task,"speed_cspeed_func_handleontral_task",4096,this,2,&speed_func_handle);
             }
             taget_speed = speed;
@@ -336,6 +345,7 @@ class MOTOR{
         static int location_to_current(int64_t location){
             return 0;
         }
+        uint8_t ID;
         //位置到电流的映射函数，默认返回0,当电流非线性时需要重写
         int (*location_to_current_func_ptr)(int64_t location)=location_to_current;
         int64_t location_taget=0;//位置环多圈目标位置
@@ -347,8 +357,8 @@ class MOTOR{
         float max_curunt=10000;//电流值范围0-16384
         C600_DATA* data;//数据对象
         float taget_speed = 0;//单位RPM
-        TaskHandle_t location_func_handle = NULL;//位置闭环控制任务句柄
-        TaskHandle_t speed_func_handle = NULL;//速度闭环控制任务句柄
+        TaskHandle_t location_func_handle = nullptr;//位置闭环控制任务句柄
+        TaskHandle_t speed_func_handle = nullptr;//速度闭环控制任务句柄
         float reduction_ratio=1;//减速比
         float acceleration=0;//电机加速度,0为不启用加速度控制
         int speed_location_K=1000;//速度环位置误差系数,这里的比例系数需要根据实际情况调整,比例系数speed_location_K可以理解为转子每相差一圈加 speed_location_K RPM速度补偿
@@ -374,15 +384,18 @@ class M3508_P19:public MOTOR{
         void set_speed(float speed,float acce=0) override{
             acce=acce>0?acce:0;
             this->data->enable=true;
-            if(location_func_handle!=NULL){
+            if(location_func_handle!=nullptr){
                 vTaskDelete(location_func_handle);
-                location_func_handle=NULL;
+                location_func_handle=nullptr;
             }
-            if(speed_func_handle==NULL){
+            if(speed_func_handle==nullptr){
                 xTaskCreate(speed_contral_task,"speed_cspeed_func_handleontral_task",4096,this,2,&speed_func_handle);
             }
             taget_speed = speed*19.0;
             acceleration=acce;
+        }
+        float get_curunt_ma(){
+            return 2e4*data->current/16384;
         }
         //获取减速箱输出速度，单位RPM
         float get_now_speed() override{
@@ -407,15 +420,18 @@ class M2006_P36:public MOTOR{
         void set_speed(float speed,float acce=0) override{
             acce=acce>0?acce:0;
             this->data->enable=true;
-            if(location_func_handle!=NULL){
+            if(location_func_handle!=nullptr){
                 vTaskDelete(location_func_handle);
-                location_func_handle=NULL;
+                location_func_handle=nullptr;
             }
-            if(speed_func_handle==NULL){
+            if(speed_func_handle==nullptr){
                 xTaskCreate(speed_contral_task,"speed_contral_task",4096,this,2,&speed_func_handle);
             }
             taget_speed = speed*36.0;
             acceleration=acce;
+        }
+        float get_curunt_ma(){
+            return 1e4*data->current/16384;
         }
         //获取减速箱输出速度，单位RPM
         float get_now_speed() override{
@@ -423,8 +439,87 @@ class M2006_P36:public MOTOR{
         }
 };
 
+//GM6020类
+class GM6020:public MOTOR{
+    public:
+        GM6020(int id){
+            if(id<1 || id>7){
+                return;
+            }
+            data=motors[id+4];
+            data->enable=true;
+            data->is_GM6020=true;
+            //设置默认PID参数
+            default_location_pid_parmater._max_value=350;
+            default_location_pid_parmater._dead_zone=0;
+            location_pid_contraler.setPram(default_location_pid_parmater);
+            speed_pid_contraler.setPram(default_speed_pid_parmater);
+        };
+        GM6020(int id,pid_param location_pid,pid_param speed_pid){
+            if(id<1 || id>7){
+                return;
+            }
+            data=motors[id+4];
+            data->enable=true;
+            data->is_GM6020=true;
+            //设置PID参数
+  
+            location_pid_contraler.setPram(location_pid);
+            speed_pid_contraler.setPram(speed_pid);
+        };
+        void setup(int frc=100){
+            if(GM6020_update_handle==nullptr){
+                int _frc=frc;
+                xTaskCreate(GM6020_update,"GM6020_update",4096,&_frc,2,&GM6020_update_handle);
+            }
+        }
+        float get_curunt_ma(){
+            return 3e3*data->current/16384;
+        }
+    protected:
+        static void GM6020_update(void *m){
+            int frc =*(int*)m;
+            while(1){
+                if((motors[4]->enable&&motors[4]->is_GM6020)||(motors[5]->enable&&motors[5]->is_GM6020)||(motors[6]->enable&&motors[6]->is_GM6020)||(motors[7]->enable&&motors[7]->is_GM6020)){
+                    twai_message_t tx_msg;
+                    tx_msg.data_length_code=8;
+                    tx_msg.identifier = 0x1FE;
+                    tx_msg.self=0;
+                    tx_msg.extd=0;
+                    tx_msg.data[0] = motor_205.set_current >> 8;
+                    tx_msg.data[1] = motor_205.set_current&0xff;
+                    tx_msg.data[2] = motor_206.set_current >> 8;
+                    tx_msg.data[3] = motor_206.set_current&0xff;
+                    tx_msg.data[4] = motor_207.set_current >> 8;
+                    tx_msg.data[5] = motor_207.set_current&0xff;
+                    tx_msg.data[6] = motor_208.set_current >> 8;
+                    tx_msg.data[7] = motor_208.set_current&0xff;
+                    twai_transmit(&tx_msg,portMAX_DELAY);
+                }
+                if((motors[8]->enable&&motors[8]->is_GM6020)||(motors[9]->enable&&motors[9]->is_GM6020)||(motors[10]->enable&&motors[10]->is_GM6020)){
+                    twai_message_t tx_msg;
+                    tx_msg.data_length_code=8;
+                    tx_msg.identifier = 0x2FE;
+                    tx_msg.self=0;
+                    tx_msg.extd=0;
+                    tx_msg.data[0] = motor_209.set_current >> 8;
+                    tx_msg.data[1] = motor_209.set_current&0xff;
+                    tx_msg.data[2] = motor_20A.set_current >> 8;
+                    tx_msg.data[3] = motor_20A.set_current&0xff;
+                    tx_msg.data[4] = motor_20B.set_current >> 8;
+                    tx_msg.data[5] = motor_20B.set_current&0xff;
+                    tx_msg.data[6] = 0;
+                    tx_msg.data[7] = 0;
+                    twai_transmit(&tx_msg,portMAX_DELAY);
+                }
+                delay(1000/frc);
+            }
 
-
+        };
+        bool use_current_control = true;
+        TaskHandle_t GM6020_update_handle=nullptr;
+        
+};
 
 //位置闭环控制任务;
 void location_contral_task(void* n){
@@ -514,7 +609,7 @@ void feedback_update_task(void* n){
         //接收CAN上数据
         ESP_ERROR_CHECK(twai_receive(&rx_message, portMAX_DELAY));
         //如果是电机数据就更新到对应的对象
-        if(rx_message.identifier>=0x201 && rx_message.identifier<=0x208){
+        if(rx_message.identifier>=0x201 && rx_message.identifier<=0x20B){
             motors[rx_message.identifier-0x201]->update_data(rx_message);
         //查看是否为用户需要的can消息地址，如果是就调用用户自定义函数
         }else if(func_map.find(rx_message.identifier)!=func_map.end()){
@@ -548,7 +643,7 @@ void update_current_task(void* p){
             tx_msg.data[5] = motor_203.set_current&0xff;
             tx_msg.data[6] = motor_204.set_current >> 8;
             tx_msg.data[7] = motor_204.set_current&0xff;
-            esp_err_t result= twai_transmit(&tx_msg,portMAX_DELAY);
+            twai_transmit(&tx_msg,portMAX_DELAY);
         }
         //如果启用了5-8号任意一个电机就更新电流
         if(motor_205.enable || motor_206.enable || motor_207.enable || motor_208.enable){
@@ -565,7 +660,7 @@ void update_current_task(void* p){
             tx_msg.data[5] = motor_207.set_current&0xff;
             tx_msg.data[6] = motor_208.set_current >> 8;
             tx_msg.data[7] = motor_208.set_current&0xff;
-            esp_err_t result= twai_transmit(&tx_msg,portMAX_DELAY);
+            twai_transmit(&tx_msg,portMAX_DELAY);
         }
         //延时
         delay(1000/frc);
@@ -575,8 +670,8 @@ void update_current_task(void* p){
 
 
 //初始化CAN总线
-void can_init(uint8_t TX_PIN, uint8_t RX_PIN,int current_update_hz){
-    
+void can_init(uint8_t TX_PIN=8, uint8_t RX_PIN=18,int current_update_hz=100){
+    //TX是指CAN收发芯片的TX,RX同理
     //总线速率,1Mbps
     static const twai_timing_config_t t_config = TWAI_TIMING_CONFIG_1MBITS();
     //滤波器设置,接受所有地址的数据
@@ -591,8 +686,8 @@ void can_init(uint8_t TX_PIN, uint8_t RX_PIN,int current_update_hz){
     twai_start();
     //创建任务
     
-    xTaskCreate(feedback_update_task,"moto_fb",4096,NULL,5,NULL);//电机反馈任务
-    xTaskCreate(update_current_task,"update_current_task",4096,&current_update_hz,5,NULL);//电流控制任务
+    xTaskCreate(feedback_update_task,"moto_fb",4096,nullptr,5,nullptr);//电机反馈任务
+    xTaskCreate(update_current_task,"update_current_task",4096,&current_update_hz,5,nullptr);//电流控制任务
     delay(100);
 }
 
