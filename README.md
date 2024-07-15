@@ -1,5 +1,5 @@
 ## 持续更新中有空就写一点
-打完RC再写，如果比较急可以arduino 或者platformio 搜索DJIMotorCtrlESP先体验电机库
+电机库已加入platformio和arduino ide库列表，可直接库管理器搜索DJIMotorCtrlESP添加到项目
 # BoardA
 重庆邮电大学HXC战队开发板A型代码仓库
 
