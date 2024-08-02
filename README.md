@@ -1,3 +1,9 @@
+<!--
+ * @LastEditors: qingmeijiupiao
+ * @Description: 
+ * @Author: qingmeijiupiao
+ * @Date: 2024-06-06 22:55:25
+-->
 ## 持续更新中有空就写一点
 电机库已加入platformio和arduino ide库列表，可直接库管理器搜索DJIMotorCtrlESP添加到项目
 # BoardA
@@ -8,3 +14,6 @@
 
 # 示例程序
 ## 简单介绍模块的使用
+
+# 教程文档
+## Esp32 arduino框架开发的简单教程
